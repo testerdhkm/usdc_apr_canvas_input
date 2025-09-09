@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+  <title>USDC APR Calculator</title>
+  <style>
+    :root {
+      --bg: #111;
+      --panel: #1c1c1c;
+      --border: #444;
+      --text: #fff;
+      --muted: #ccc;
+      --primary: #00bfff;
+      --primary-hover: #009acd;
+      --accent: #00eaff;
+      --gold: #ffd700;
+      --success: #90ee90;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      padding: 16px;
+      gap: 12px;
+    }
+    .controls {
+      width: 100%;
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 14px 16px;
+      background: var(--panel);
+      border: 1.5px solid var(--border);
+      border-radius: 12px;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .label {
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .input {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid #555;
+      border-radius: 10px;
+      background: #222;
+      color: var(--text);
+      font-size: 15px;
+      outline: none;
+    }
+    .input:focus { border-color: var(--primary); box-shadow: 0 0 0 2px rgb(0 191 255 / 15%); }
+
+    .btn {
+      align-self: end;
+      padding: 12px 16px;
+      border: none;
+      border-radius: 10px;
+      background: var(--primary);
+      color: var(--text);
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background .2s ease, transform .05s ease;
+    }
+    .btn:active { transform: translateY(1px); }
+    .btn:hover { background: var(--primary-hover); }
+
+    .canvas-wrap {
+      width: 100%;
+      max-width: 960px;
+      margin: 0 auto;
+      border: 1.5px solid var(--border);
+      border-radius: 12px;
+      background: var(--panel);
+      padding: 8px;
+    }
+    canvas {
+      width: 100%; /* responsive width */
+      height: auto; /* keep aspect via JS */
+      display: block;
+      border-radius: 8px;
+      background: #141414;
+    }
+
+    /* 📱 Mobile-first adjustments */
+    @media (max-width: 768px) {
+      .controls { grid-template-columns: 1fr 1fr; }
+      .btn { grid-column: span 2; }
+    }
+    @media (max-width: 420px) {
+      body { padding: 10px; }
+      .controls { grid-template-columns: 1fr; }
+      .btn { grid-column: 1; width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <form class="controls" onsubmit="event.preventDefault(); recalc();">
+    <div class="field">
+      <span class="label">Principal (USDC)</span>
+      <input id="principalInput" class="input" type="number" inputmode="decimal" value="1042" placeholder="เช่น 1042">
+    </div>
+    <div class="field">
+      <span class="label">APR (%)</span>
+      <input id="aprInput" class="input" type="number" inputmode="decimal" step="0.01" value="11.93" placeholder="เช่น 11.93">
+    </div>
+    <div class="field">
+      <span class="label">Rate (THB/USDC)</span>
+      <input id="rateInput" class="input" type="number" inputmode="decimal" step="0.01" value="32.11" placeholder="เช่น 32.11">
+    </div>
+    <button type="submit" class="btn">Calculate</button>
+  </form>
+
+  <div class="canvas-wrap">
+    <canvas id="calcCanvas"></canvas>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('calcCanvas');
+    const ctx = canvas.getContext('2d');
+
+    // Keep a fixed aspect ratio for readability
+    const ASPECT = 700/450; // w/h
+
+    function fitCanvasToContainer() {
+      const dpr = window.devicePixelRatio || 1;
+      const rect = canvas.parentElement.getBoundingClientRect();
+      // Target CSS width = container width; compute height from aspect
+      const cssWidth = Math.min(rect.width, 960);
+      const cssHeight = Math.round(cssWidth / ASPECT);
+
+      // Set CSS size
+      canvas.style.width = cssWidth + 'px';
+      canvas.style.height = cssHeight + 'px';
+
+      // Set internal pixel size for crisp drawing on HiDPI
+      canvas.width = Math.floor(cssWidth * dpr);
+      canvas.height = Math.floor(cssHeight * dpr);
+
+      // Normalize drawing units back to CSS pixels
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    function draw(principal, apr, rateTHB) {
+      fitCanvasToContainer();
+
+      // Use canvas CSS pixels for layout
+      const W = parseFloat(getComputedStyle(canvas).width);
+      const H = parseFloat(getComputedStyle(canvas).height);
+
+      // Helper sizes responsive to width
+      const h1 = Math.max(18, Math.min(32, W * 0.04));
+      const h2 = Math.max(14, Math.min(24, W * 0.03));
+      const body = Math.max(12, Math.min(20, W * 0.026));
+
+      ctx.clearRect(0, 0, W, H);
+
+      function write(text, x, y, size = body, color = '#fff', bold=false) {
+        ctx.fillStyle = color;
+        ctx.font = `${bold ? '700 ' : ''}${size}px system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif`;
+        ctx.fillText(text, x, y);
+      }
+
+      // Compute values
+      const dailyRate = apr / 100 / 365;
+      const profitDay = principal * dailyRate;
+      const profitMonth = profitDay * 30;
+      const profitYear = principal * (apr / 100);
+
+      const thbDay = profitDay * rateTHB;
+      const thbMonth = profitMonth * rateTHB;
+      const thbYear = profitYear * rateTHB;
+
+      // Layout anchors
+      const left = Math.round(W * 0.06);
+      const left2 = Math.round(W * 0.10);
+      let y = Math.round(H * 0.14);
+      const lh = Math.max(22, body * 1.6);
+
+      // Title
+      write('📊 USDC APR Calculator', Math.round(W*0.2), y, h1, '#00eaff', true);
+
+      // Primary facts
+      y += Math.round(H * 0.12);
+      write(`เงินต้น: ${Number(principal || 0).toLocaleString()} USDC`, left, y, h2, '#ffd700', true);
+
+      y += lh;
+      write(`APR: ${Number(apr || 0)}%`, left, y, body);
+      y += lh * 0.9;
+      write(`Daily Rate: ${(dailyRate*100).toFixed(4)}%`, left, y, body);
+
+      // Section header
+      y += Math.round(H * 0.08);
+      write('ผลตอบแทนที่คาดว่าจะได้รับ:', left, y, h2, '#90ee90', true);
+
+      // Breakdown
+      y += lh;
+      write(`ต่อวัน: ${profitDay.toFixed(3)} USDC (~${Math.round(thbDay)} บาท)`, left2, y, body);
+      y += lh;
+      write(`ต่อเดือน: ${profitMonth.toFixed(2)} USDC (~${Math.round(thbMonth)} บาท)`, left2, y, body);
+      y += lh;
+      write(`ต่อปี: ${profitYear.toFixed(1)} USDC (~${Math.round(thbYear)} บาท)`, left2, y, body);
+
+      // Footer note
+      write(`✨ คำนวณด้วย APR ${apr}% และอัตราแลกเปลี่ยน ${rateTHB} THB/USDC`, Math.round(W*0.06), H - Math.round(lh*0.8), Math.max(12, body*0.9), '#aaa');
+    }
+
+    function recalc() {
+      const principal = parseFloat(document.getElementById('principalInput').value) || 0;
+      const apr = parseFloat(document.getElementById('aprInput').value) || 0;
+      const rateTHB = parseFloat(document.getElementById('rateInput').value) || 0;
+      draw(principal, apr, rateTHB);
+    }
+
+    // Redraw on resize/orientation change for responsiveness
+    window.addEventListener('resize', recalc, { passive: true });
+    window.addEventListener('orientationchange', recalc);
+
+    // Initial paint
+    recalc();
+  </script>
+</body>
+</html>
